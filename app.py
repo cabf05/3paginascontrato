@@ -21,7 +21,6 @@ def extract_cronograma(text, lote, quadra):
     """Extrai cronograma de pagamento do texto em blocos de 7 linhas."""
     cronograma = []
 
-    # Captura do trecho entre "Cronograma de Pagamento:" e "TOTAL <valor>"
     match = re.search(r"Cronograma de Pagamento:(.*?TOTAL\s+[\d\.,]+)", text, re.DOTALL | re.IGNORECASE)
     if not match:
         return cronograma
@@ -36,10 +35,8 @@ def extract_cronograma(text, lote, quadra):
         flags=re.DOTALL | re.IGNORECASE
     ).strip()
 
-    # Divide em linhas
     lines = [l.strip() for l in block.splitlines() if l.strip()]
 
-    # Agrupar em blocos de 7 (cada entrada da tabela)
     for i in range(0, len(lines), 7):
         if i + 6 < len(lines):
             desc = lines[i]
@@ -64,25 +61,55 @@ def extract_cronograma(text, lote, quadra):
 
     return cronograma
 
+def extract_valores_lotes(pdf_file):
+    """Extrai tabela de valores de lotes do PDF enviado separadamente."""
+    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text("text") + "\n"
+
+    # Limpa linhas e filtra possíveis linhas de tabela
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+    data = []
+    for line in lines:
+        # Esperado: Lote  Quadra  Valor
+        parts = re.split(r"\s+", line)
+        if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+            try:
+                lote = parts[0]
+                quadra = parts[1]
+                valor = float(parts[2].replace(",", "").replace(" ", ""))
+                data.append({"Lote": lote, "Quadra": quadra, "VALOR TABELA": valor})
+            except:
+                continue
+
+    return pd.DataFrame(data)
+
 # -------------------------------
-# Upload múltiplo de arquivos PDF
+# Upload de arquivos
 # -------------------------------
 uploaded_files = st.file_uploader(
-    "Envie seus arquivos PDF",
+    "Envie seus contratos em PDF",
     type=["pdf"],
     accept_multiple_files=True
 )
 
+uploaded_tabela = st.file_uploader(
+    "Envie o PDF com a tabela de valores dos lotes",
+    type=["pdf"],
+    accept_multiple_files=False
+)
+
 if uploaded_files:
-    data_text = []       # tabela 1: texto bruto
-    data_extracted = []  # tabela 2: valores principais
-    data_cronograma = [] # tabela 3: cronograma
+    data_text = []       
+    data_extracted = []  
+    data_cronograma = [] 
 
     for file in uploaded_files:
         doc = fitz.open(stream=file.read(), filetype="pdf")
         text_content = ""
 
-        # Extrair no máximo 3 páginas
         for page_num in range(min(3, len(doc))):
             page = doc[page_num]
             text_content += page.get_text("text") + "\n"
@@ -92,9 +119,6 @@ if uploaded_files:
             "Texto (3 primeiras páginas)": text_content.strip()
         })
 
-        # -------------------------------
-        # Extração de informações principais
-        # -------------------------------
         lote_match = re.search(r"Lote\s+(\d+)", text_content, re.IGNORECASE)
         quadra_match = re.search(r"Quadra[^\d]*(\d+)", text_content, re.IGNORECASE)
 
@@ -124,72 +148,57 @@ if uploaded_files:
             "Soma (Total + Comissão)": f"{soma:,.2f}" if soma is not None else None
         })
 
-        # -------------------------------
-        # Extração do cronograma
-        # -------------------------------
         cronograma_rows = extract_cronograma(text_content, lote, quadra)
         data_cronograma.extend(cronograma_rows)
 
-    # -------------------------------
-    # Mostrar Tabela 1 (texto bruto)
-    # -------------------------------
     df_text = pd.DataFrame(data_text)
+    df_extracted = pd.DataFrame(data_extracted)
+    df_cronograma = pd.DataFrame(data_cronograma)
+
+    # -------------------------------
+    # Mostrar tabelas 1 a 3
+    # -------------------------------
     st.subheader("📄 Tabela 1: Conteúdo bruto (3 primeiras páginas)")
     st.dataframe(df_text, use_container_width=True)
 
-    # -------------------------------
-    # Mostrar Tabela 2 (valores principais)
-    # -------------------------------
-    df_extracted = pd.DataFrame(data_extracted)
     st.subheader("📊 Tabela 2: Valores principais extraídos")
     st.dataframe(df_extracted, use_container_width=True)
 
-    # -------------------------------
-    # Mostrar Tabela 3 (cronograma)
-    # -------------------------------
     st.subheader("📑 Tabela 3: Cronograma de Pagamento")
-    if data_cronograma:
-        df_cronograma = pd.DataFrame(data_cronograma)
+    st.dataframe(df_cronograma, use_container_width=True)
 
-        # Formatar valores numéricos
-        df_cronograma["Valor Total da Série"] = df_cronograma["Valor Total da Série"].apply(
-            lambda x: f"{x:,.2f}" if pd.notnull(x) else None
+    # -------------------------------
+    # Tabela 5 (se tabela de valores enviada)
+    # -------------------------------
+    if uploaded_tabela and not df_cronograma.empty:
+        df_tabela = extract_valores_lotes(uploaded_tabela)
+
+        df5 = df_cronograma.merge(
+            df_tabela,
+            on=["Lote", "Quadra"],
+            how="left"
         )
-        df_cronograma["Valor Inicial (1ª Parcela)"] = df_cronograma["Valor Inicial (1ª Parcela)"].apply(
-            lambda x: f"{x:,.2f}" if pd.notnull(x) else None
+
+        df5["Diferença (VALOR TABELA - Valor Total da Série)"] = df5.apply(
+            lambda row: row["VALOR TABELA"] - row["Valor Total da Série"] if pd.notnull(row["VALOR TABELA"]) and pd.notnull(row["Valor Total da Série"]) else None,
+            axis=1
         )
 
-        st.dataframe(df_cronograma, use_container_width=True)
+        df5["% Diferença"] = df5.apply(
+            lambda row: (row["Diferença (VALOR TABELA - Valor Total da Série)"] / row["VALOR TABELA"] * 100) if pd.notnull(row["VALOR TABELA"]) and pd.notnull(row["Diferença (VALOR TABELA - Valor Total da Série)"]) else None,
+            axis=1
+        )
 
-        # Exportar CSV
-        csv_cronograma = df_cronograma.to_csv(index=False)
+        st.subheader("📊 Tabela 5: Cronograma + Valor Tabela")
+        st.dataframe(df5, use_container_width=True)
+
+        csv_df5 = df5.to_csv(index=False)
         st.download_button(
-            label="📥 Baixar CSV (Cronograma de Pagamento)",
-            data=csv_cronograma,
-            file_name="cronograma_pagamento.csv",
+            label="📥 Baixar CSV (Tabela 5)",
+            data=csv_df5,
+            file_name="tabela_5.csv",
             mime="text/csv"
         )
-    else:
-        st.warning("Nenhum cronograma foi encontrado nos PDFs enviados.")
-
-    # -------------------------------
-    # Exportação das tabelas 1 e 2
-    # -------------------------------
-    csv_extracted = df_extracted.to_csv(index=False)
-    st.download_button(
-        label="📥 Baixar CSV (Valores principais)",
-        data=csv_extracted,
-        file_name="valores_principais.csv",
-        mime="text/csv"
-    )
-
-    csv_text = df_text.to_csv(index=False)
-    st.download_button(
-        label="📥 Baixar CSV (Texto bruto)",
-        data=csv_text,
-        file_name="texto_bruto.csv",
-        mime="text/csv"
-    )
 
 else:
-    st.info("Faça upload de um ou mais PDFs para iniciar a extração.")
+    st.info("Faça upload de contratos em PDF para iniciar a extração.")
