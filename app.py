@@ -157,19 +157,19 @@ if uploaded_files:
             # Ajustar tipos
             df_tabela["VALOR LOTE"] = df_tabela["VALOR LOTE"].apply(convert_brl_to_en)
 
-            df5 = df_cronograma.merge(
+            df5 = df_extracted.merge(
                 df_tabela.rename(columns={"LOTE": "Lote", "QUADRA": "Quadra", "VALOR LOTE": "VALOR LOTE"}),
                 on=["Lote", "Quadra"],
                 how="left"
             )
 
             df5["Diferença (VALOR LOTE - Valor Total da Série)"] = df5.apply(
-                lambda row: row["VALOR LOTE"] - row["Valor Total da Série"] if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Valor Total da Série"]) else None,
+                lambda row: row["VALOR LOTE"] - row["Soma (Total + Comissão)"] if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Soma (Total + Comissão)"]) else None,
                 axis=1
             )
 
             df5["% Diferença"] = df5.apply(
-                lambda row: (row["Diferença (VALOR LOTE - Valor Total da Série)"] / row["VALOR LOTE"] * 100) if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Diferença (VALOR LOTE - Valor Total da Série)"]) else None,
+                lambda row: (row["Diferença (VALOR LOTE - Soma (Total + Comissão))"] / row["VALOR LOTE"] * 100) if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Diferença (VALOR LOTE - Valor Total da Série)"]) else None,
                 axis=1
             )
 
