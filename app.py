@@ -163,7 +163,7 @@ if uploaded_files:
                 how="left"
             )
 
-            df5["Diferença (VALOR LOTE - Valor Total da Série)"] = df5.apply(
+            df5["Diferença (VALOR LOTE - Soma (Total + Comissão))"] = df5.apply(
                 lambda row: row["VALOR LOTE"] - row["Soma (Total + Comissão)"] if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Soma (Total + Comissão)"]) else None,
                 axis=1
             )
