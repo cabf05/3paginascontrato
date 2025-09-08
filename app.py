@@ -161,4 +161,3 @@ if uploaded_files:
 
 else:
     st.info("Faça upload de um ou mais PDFs para iniciar a extração.")
-
