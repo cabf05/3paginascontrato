@@ -61,31 +61,6 @@ def extract_cronograma(text, lote, quadra):
 
     return cronograma
 
-def extract_valores_lotes(pdf_file):
-    """Extrai tabela de valores de lotes do PDF enviado separadamente."""
-    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text("text") + "\n"
-
-    # Limpa linhas e filtra possíveis linhas de tabela
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-
-    data = []
-    for line in lines:
-        # Esperado: Lote  Quadra  Valor
-        parts = re.split(r"\s+", line)
-        if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
-            try:
-                lote = parts[0]
-                quadra = parts[1]
-                valor = float(parts[2].replace(",", "").replace(" ", ""))
-                data.append({"Lote": lote, "Quadra": quadra, "VALOR TABELA": valor})
-            except:
-                continue
-
-    return pd.DataFrame(data)
-
 # -------------------------------
 # Upload de arquivos
 # -------------------------------
@@ -95,9 +70,9 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-uploaded_tabela = st.file_uploader(
-    "Envie o PDF com a tabela de valores dos lotes",
-    type=["pdf"],
+uploaded_csv = st.file_uploader(
+    "Envie o CSV com os valores de tabela (colunas: Lote, Quadra, VALOR LOTE)",
+    type=["csv"],
     accept_multiple_files=False
 )
 
@@ -168,37 +143,46 @@ if uploaded_files:
     st.dataframe(df_cronograma, use_container_width=True)
 
     # -------------------------------
-    # Tabela 5 (se tabela de valores enviada)
+    # Tabela 5 (se CSV enviado)
     # -------------------------------
-    if uploaded_tabela and not df_cronograma.empty:
-        df_tabela = extract_valores_lotes(uploaded_tabela)
+    if uploaded_csv and not df_cronograma.empty:
+        df_tabela = pd.read_csv(uploaded_csv, dtype=str)
 
-        df5 = df_cronograma.merge(
-            df_tabela,
-            on=["Lote", "Quadra"],
-            how="left"
-        )
+        # Garantir que os nomes das colunas sejam padronizados
+        df_tabela.rename(columns=lambda x: x.strip().upper(), inplace=True)
 
-        df5["Diferença (VALOR TABELA - Valor Total da Série)"] = df5.apply(
-            lambda row: row["VALOR TABELA"] - row["Valor Total da Série"] if pd.notnull(row["VALOR TABELA"]) and pd.notnull(row["Valor Total da Série"]) else None,
-            axis=1
-        )
+        if not {"LOTE", "QUADRA", "VALOR LOTE"}.issubset(df_tabela.columns):
+            st.error("O CSV deve conter as colunas: Lote, Quadra, VALOR LOTE")
+        else:
+            # Ajustar tipos
+            df_tabela["VALOR LOTE"] = df_tabela["VALOR LOTE"].apply(convert_brl_to_en)
 
-        df5["% Diferença"] = df5.apply(
-            lambda row: (row["Diferença (VALOR TABELA - Valor Total da Série)"] / row["VALOR TABELA"] * 100) if pd.notnull(row["VALOR TABELA"]) and pd.notnull(row["Diferença (VALOR TABELA - Valor Total da Série)"]) else None,
-            axis=1
-        )
+            df5 = df_cronograma.merge(
+                df_tabela.rename(columns={"LOTE": "Lote", "QUADRA": "Quadra", "VALOR LOTE": "VALOR LOTE"}),
+                on=["Lote", "Quadra"],
+                how="left"
+            )
 
-        st.subheader("📊 Tabela 5: Cronograma + Valor Tabela")
-        st.dataframe(df5, use_container_width=True)
+            df5["Diferença (VALOR LOTE - Valor Total da Série)"] = df5.apply(
+                lambda row: row["VALOR LOTE"] - row["Valor Total da Série"] if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Valor Total da Série"]) else None,
+                axis=1
+            )
 
-        csv_df5 = df5.to_csv(index=False)
-        st.download_button(
-            label="📥 Baixar CSV (Tabela 5)",
-            data=csv_df5,
-            file_name="tabela_5.csv",
-            mime="text/csv"
-        )
+            df5["% Diferença"] = df5.apply(
+                lambda row: (row["Diferença (VALOR LOTE - Valor Total da Série)"] / row["VALOR LOTE"] * 100) if pd.notnull(row["VALOR LOTE"]) and pd.notnull(row["Diferença (VALOR LOTE - Valor Total da Série)"]) else None,
+                axis=1
+            )
+
+            st.subheader("📊 Tabela 5: Cronograma + Valor Lote")
+            st.dataframe(df5, use_container_width=True)
+
+            csv_df5 = df5.to_csv(index=False)
+            st.download_button(
+                label="📥 Baixar CSV (Tabela 5)",
+                data=csv_df5,
+                file_name="tabela_5.csv",
+                mime="text/csv"
+            )
 
 else:
     st.info("Faça upload de contratos em PDF para iniciar a extração.")
