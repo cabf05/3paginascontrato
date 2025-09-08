@@ -68,20 +68,24 @@ def extract_valores_lotes(pdf_file):
     for page in doc:
         text += page.get_text("text") + "\n"
 
-    # Limpa linhas e filtra possíveis linhas de tabela
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
     data = []
     for line in lines:
-        # Esperado: Lote  Quadra  Valor
         parts = re.split(r"\s+", line)
-        if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
+
+        # Espera algo como: Lote Quadra Valor
+        if len(parts) >= 3 and parts[0].isdigit():
+            lote = parts[0]
+            quadra = parts[1]  # pode ser número ou texto (ex: "C1")
             try:
-                lote = parts[0]
-                quadra = parts[1]
                 valor = float(parts[2].replace(",", "").replace(" ", ""))
-                data.append({"Lote": lote, "Quadra": quadra, "VALOR TABELA": valor})
-            except:
+                data.append({
+                    "Lote": str(lote),
+                    "Quadra": str(quadra),
+                    "VALOR TABELA": valor
+                })
+            except ValueError:
                 continue
 
     return pd.DataFrame(data)
@@ -120,7 +124,7 @@ if uploaded_files:
         })
 
         lote_match = re.search(r"Lote\s+(\d+)", text_content, re.IGNORECASE)
-        quadra_match = re.search(r"Quadra[^\d]*(\d+)", text_content, re.IGNORECASE)
+        quadra_match = re.search(r"Quadra[^\dA-Za-z]*(\w+)", text_content, re.IGNORECASE)
 
         lote = lote_match.group(1) if lote_match else None
         quadra = quadra_match.group(1) if quadra_match else None
@@ -173,19 +177,27 @@ if uploaded_files:
     if uploaded_tabela and not df_cronograma.empty:
         df_tabela = extract_valores_lotes(uploaded_tabela)
 
-        df5 = df_cronograma.merge(
-            df_tabela,
-            on=["Lote", "Quadra"],
-            how="left"
-        )
+        # Padronizar colunas para merge
+        df_cronograma["Lote"] = df_cronograma["Lote"].astype(str).str.strip()
+        df_cronograma["Quadra"] = df_cronograma["Quadra"].astype(str).str.strip()
+        df_tabela["Lote"] = df_tabela["Lote"].astype(str).str.strip()
+        df_tabela["Quadra"] = df_tabela["Quadra"].astype(str).str.strip()
 
+        # Merge
+        df5 = df_cronograma.merge(df_tabela, on=["Lote", "Quadra"], how="left")
+
+        # Diferença e percentual
         df5["Diferença (VALOR TABELA - Valor Total da Série)"] = df5.apply(
-            lambda row: row["VALOR TABELA"] - row["Valor Total da Série"] if pd.notnull(row["VALOR TABELA"]) and pd.notnull(row["Valor Total da Série"]) else None,
+            lambda row: row["VALOR TABELA"] - row["Valor Total da Série"]
+            if pd.notnull(row.get("VALOR TABELA")) and pd.notnull(row.get("Valor Total da Série"))
+            else None,
             axis=1
         )
 
         df5["% Diferença"] = df5.apply(
-            lambda row: (row["Diferença (VALOR TABELA - Valor Total da Série)"] / row["VALOR TABELA"] * 100) if pd.notnull(row["VALOR TABELA"]) and pd.notnull(row["Diferença (VALOR TABELA - Valor Total da Série)"]) else None,
+            lambda row: (row["Diferença (VALOR TABELA - Valor Total da Série)"] / row["VALOR TABELA"] * 100)
+            if pd.notnull(row.get("VALOR TABELA")) and pd.notnull(row.get("Diferença (VALOR TABELA - Valor Total da Série)"))
+            else None,
             axis=1
         )
 
@@ -197,6 +209,34 @@ if uploaded_files:
             label="📥 Baixar CSV (Tabela 5)",
             data=csv_df5,
             file_name="tabela_5.csv",
+            mime="text/csv"
+        )
+
+    # -------------------------------
+    # Exportações
+    # -------------------------------
+    csv_text = df_text.to_csv(index=False)
+    st.download_button(
+        label="📥 Baixar CSV (Texto bruto)",
+        data=csv_text,
+        file_name="texto_bruto.csv",
+        mime="text/csv"
+    )
+
+    csv_extracted = df_extracted.to_csv(index=False)
+    st.download_button(
+        label="📥 Baixar CSV (Valores principais)",
+        data=csv_extracted,
+        file_name="valores_principais.csv",
+        mime="text/csv"
+    )
+
+    if not df_cronograma.empty:
+        csv_cronograma = df_cronograma.to_csv(index=False)
+        st.download_button(
+            label="📥 Baixar CSV (Cronograma de Pagamento)",
+            data=csv_cronograma,
+            file_name="cronograma_pagamento.csv",
             mime="text/csv"
         )
 
